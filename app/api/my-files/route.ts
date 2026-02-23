@@ -1,11 +1,10 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { readdir, stat } from "node:fs/promises"
 import { join } from "node:path"
+import { BASE_DIR, resolveSafePath } from "@/lib/files"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
-
-const SCAN_DIR = "/home/nyx9/torrents"
 
 export type MyFileItem = {
   name: string
@@ -14,22 +13,44 @@ export type MyFileItem = {
   modified: string
 }
 
-type ResponseBody =
-  | { success: true; total: number; files: MyFileItem[] }
-  | { success: false; error: string }
+type SuccessBody = {
+  success: true
+  currentPath: string
+  parentPath: string | null
+  files: MyFileItem[]
+}
+
+type ErrorBody = {
+  success: false
+  error: string
+}
 
 /**
- * GET /api/my-files
- * Lists top-level files and folders from the hardcoded directory.
- * Server-side only, path is not user-configurable.
+ * GET /api/my-files?path=
+ * Lists files and folders. Path is relative to BASE_DIR.
+ * Prevents path traversal. Only exposes relative paths.
  */
-export async function GET(): Promise<NextResponse<ResponseBody>> {
+export async function GET(
+  request: NextRequest
+): Promise<NextResponse<SuccessBody | ErrorBody>> {
   try {
-    const entries = await readdir(SCAN_DIR, { withFileTypes: true })
+    const pathParam = request.nextUrl.searchParams.get("path")
+    const parsed = resolveSafePath(pathParam)
+
+    if (!parsed) {
+      return NextResponse.json(
+        { success: false, error: "Invalid path" },
+        { status: 400 }
+      )
+    }
+
+    const { resolved, relativePath } = parsed
+
+    const entries = await readdir(resolved, { withFileTypes: true })
 
     const files: MyFileItem[] = await Promise.all(
       entries.map(async (entry) => {
-        const fullPath = join(SCAN_DIR, entry.name)
+        const fullPath = join(resolved, entry.name)
         const stats = await stat(fullPath)
 
         return {
@@ -50,9 +71,17 @@ export async function GET(): Promise<NextResponse<ResponseBody>> {
       return dateB - dateA
     })
 
+    const parentPath =
+      relativePath === ""
+        ? null
+        : relativePath.includes("/")
+          ? relativePath.split("/").slice(0, -1).join("/")
+          : ""
+
     return NextResponse.json({
       success: true,
-      total: files.length,
+      currentPath: relativePath,
+      parentPath,
       files,
     })
   } catch (err) {
@@ -66,6 +95,16 @@ export async function GET(): Promise<NextResponse<ResponseBody>> {
       return NextResponse.json(
         { success: false, error: "Directory not found" },
         { status: 404 }
+      )
+    }
+
+    if (
+      (err as NodeJS.ErrnoException)?.code === "ENOTDIR" ||
+      message.includes("ENOTDIR")
+    ) {
+      return NextResponse.json(
+        { success: false, error: "Not a directory" },
+        { status: 400 }
       )
     }
 
