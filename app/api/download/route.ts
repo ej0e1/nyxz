@@ -1,84 +1,80 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createReadStream } from "node:fs"
-import { stat } from "node:fs/promises"
-import { basename } from "node:path"
-import { resolveSafePath } from "@/lib/files"
+import { GetObjectCommand } from "@aws-sdk/client-s3"
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
+import { getWasabiClient, getWasabiBucket } from "@/lib/wasabi"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 
+const URL_EXPIRES_IN = 300
+
 /**
- * GET /api/download?path=
- * Streams a file for download. Path is relative to BASE_DIR.
- * Prevents path traversal. Directories return 400.
+ * Sanitize key: reject path traversal, leading slashes, empty.
+ */
+function sanitizeKey(key: string | null): string | null {
+  if (!key || typeof key !== "string") return null
+  const trimmed = key.trim()
+  if (!trimmed) return null
+  if (trimmed.includes("..") || trimmed.startsWith("/")) return null
+  return trimmed
+}
+
+/**
+ * GET /api/download?key=
+ * Returns signed URL for direct download from Wasabi.
+ * URL expires in 300 seconds.
  */
 export async function GET(request: NextRequest) {
   try {
-    const pathParam = request.nextUrl.searchParams.get("path")
+    const keyParam = request.nextUrl.searchParams.get("key")
+    const key = sanitizeKey(keyParam)
 
-    if (!pathParam || pathParam.trim() === "") {
+    if (!key) {
       return NextResponse.json(
-        { error: "Path is required" },
+        { success: false, error: "Key is required" },
         { status: 400 }
       )
     }
 
-    const parsed = resolveSafePath(pathParam.trim())
-
-    if (!parsed) {
+    if (key.endsWith("/")) {
       return NextResponse.json(
-        { error: "Invalid path" },
+        { success: false, error: "Cannot download a folder" },
         { status: 400 }
       )
     }
 
-    const { resolved } = parsed
+    const client = getWasabiClient()
+    const bucket = getWasabiBucket()
 
-    const fileStat = await stat(resolved)
+    const command = new GetObjectCommand({
+      Bucket: bucket,
+      Key: key,
+    })
 
-    if (fileStat.isDirectory()) {
-      return NextResponse.json(
-        { error: "Cannot download a directory" },
-        { status: 400 }
-      )
-    }
+    const signedUrl = await getSignedUrl(client, command, {
+      expiresIn: URL_EXPIRES_IN,
+    })
 
-    const filename = basename(resolved)
-    const stream = createReadStream(resolved)
-
-    return new Response(stream as unknown as ReadableStream, {
-      headers: {
-        "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"`,
-        "Content-Type": "application/octet-stream",
-        "Content-Length": String(fileStat.size),
-      },
+    return NextResponse.json({
+      success: true,
+      url: signedUrl,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error"
     console.error("[api/download] Error:", message)
 
     if (
-      (err as NodeJS.ErrnoException)?.code === "ENOENT" ||
-      message.includes("ENOENT")
+      message.includes("must be set") ||
+      message.includes("WASABI_")
     ) {
       return NextResponse.json(
-        { error: "File not found" },
-        { status: 404 }
-      )
-    }
-
-    if (
-      (err as NodeJS.ErrnoException)?.code === "EACCES" ||
-      message.includes("EACCES")
-    ) {
-      return NextResponse.json(
-        { error: "Permission denied" },
-        { status: 403 }
+        { success: false, error: "Storage not configured" },
+        { status: 503 }
       )
     }
 
     return NextResponse.json(
-      { error: "Failed to download file" },
+      { success: false, error: "Failed to generate download URL" },
       { status: 500 }
     )
   }

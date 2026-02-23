@@ -1,22 +1,25 @@
 import { NextRequest, NextResponse } from "next/server"
-import { readdir, stat } from "node:fs/promises"
-import { join } from "node:path"
-import { BASE_DIR, resolveSafePath } from "@/lib/files"
+import {
+  ListObjectsV2Command,
+  type _Object,
+  type CommonPrefix,
+} from "@aws-sdk/client-s3"
+import { getWasabiClient, getWasabiBucket } from "@/lib/wasabi"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 
 export type MyFileItem = {
+  key: string
   name: string
-  isDirectory: boolean
   size: number
-  modified: string
+  lastModified: string
+  isFolder: boolean
 }
 
 type SuccessBody = {
   success: true
-  currentPath: string
-  parentPath: string | null
+  currentPrefix: string
   files: MyFileItem[]
 }
 
@@ -26,62 +29,79 @@ type ErrorBody = {
 }
 
 /**
- * GET /api/my-files?path=
- * Lists files and folders. Path is relative to BASE_DIR.
- * Prevents path traversal. Only exposes relative paths.
+ * GET /api/my-files?prefix=
+ * Lists objects and common prefixes (folders) from Wasabi bucket.
+ * prefix is optional, defaults to root.
  */
 export async function GET(
   request: NextRequest
 ): Promise<NextResponse<SuccessBody | ErrorBody>> {
   try {
-    const pathParam = request.nextUrl.searchParams.get("path")
-    const parsed = resolveSafePath(pathParam)
+    const prefixParam = request.nextUrl.searchParams.get("prefix") ?? ""
+    const prefix = prefixParam.trim()
+    const normalizedPrefix = prefix && !prefix.endsWith("/") ? `${prefix}/` : prefix
 
-    if (!parsed) {
-      return NextResponse.json(
-        { success: false, error: "Invalid path" },
-        { status: 400 }
-      )
+    const client = getWasabiClient()
+    const bucket = getWasabiBucket()
+
+    const command = new ListObjectsV2Command({
+      Bucket: bucket,
+      Prefix: normalizedPrefix,
+      Delimiter: "/",
+    })
+
+    const response = await client.send(command)
+
+    const files: MyFileItem[] = []
+
+    if (response.CommonPrefixes) {
+      for (const cp of response.CommonPrefixes as CommonPrefix[]) {
+        const fullPrefix = cp.Prefix ?? ""
+        const name = fullPrefix
+          .replace(normalizedPrefix, "")
+          .replace(/\/$/, "")
+        if (name) {
+          files.push({
+            key: fullPrefix,
+            name,
+            size: 0,
+            lastModified: new Date(0).toISOString(),
+            isFolder: true,
+          })
+        }
+      }
     }
 
-    const { resolved, relativePath } = parsed
+    if (response.Contents) {
+      for (const obj of response.Contents as _Object[]) {
+        const key = obj.Key ?? ""
+        if (!key) continue
 
-    const entries = await readdir(resolved, { withFileTypes: true })
+        const name = key.replace(normalizedPrefix, "")
+        if (!name || name.endsWith("/")) continue
 
-    const files: MyFileItem[] = await Promise.all(
-      entries.map(async (entry) => {
-        const fullPath = join(resolved, entry.name)
-        const stats = await stat(fullPath)
-
-        return {
-          name: entry.name,
-          isDirectory: entry.isDirectory(),
-          size: stats.size,
-          modified: stats.mtime.toISOString(),
-        }
-      })
-    )
+        files.push({
+          key,
+          name,
+          size: obj.Size ?? 0,
+          lastModified: (obj.LastModified?.toISOString?.() ?? new Date().toISOString()),
+          isFolder: false,
+        })
+      }
+    }
 
     files.sort((a, b) => {
-      if (a.isDirectory !== b.isDirectory) {
-        return a.isDirectory ? -1 : 1
+      if (a.isFolder !== b.isFolder) {
+        return a.isFolder ? -1 : 1
       }
-      const dateA = new Date(a.modified).getTime()
-      const dateB = new Date(b.modified).getTime()
+      const dateA = new Date(a.lastModified).getTime()
+      const dateB = new Date(b.lastModified).getTime()
       return dateB - dateA
     })
 
-    const parentPath =
-      relativePath === ""
-        ? null
-        : relativePath.includes("/")
-          ? relativePath.split("/").slice(0, -1).join("/")
-          : ""
-
     return NextResponse.json({
       success: true,
-      currentPath: relativePath,
-      parentPath,
+      currentPrefix: normalizedPrefix,
       files,
     })
   } catch (err) {
@@ -89,37 +109,17 @@ export async function GET(
     console.error("[api/my-files] Error:", message)
 
     if (
-      (err as NodeJS.ErrnoException)?.code === "ENOENT" ||
-      message.includes("ENOENT")
+      message.includes("must be set") ||
+      message.includes("WASABI_")
     ) {
       return NextResponse.json(
-        { success: false, error: "Directory not found" },
-        { status: 404 }
-      )
-    }
-
-    if (
-      (err as NodeJS.ErrnoException)?.code === "ENOTDIR" ||
-      message.includes("ENOTDIR")
-    ) {
-      return NextResponse.json(
-        { success: false, error: "Not a directory" },
-        { status: 400 }
-      )
-    }
-
-    if (
-      (err as NodeJS.ErrnoException)?.code === "EACCES" ||
-      message.includes("EACCES")
-    ) {
-      return NextResponse.json(
-        { success: false, error: "Permission denied" },
-        { status: 403 }
+        { success: false, error: "Storage not configured" },
+        { status: 503 }
       )
     }
 
     return NextResponse.json(
-      { success: false, error: "Failed to read directory" },
+      { success: false, error: "Failed to list files" },
       { status: 500 }
     )
   }

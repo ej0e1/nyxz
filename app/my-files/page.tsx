@@ -10,10 +10,11 @@ import { cn } from "@/lib/utils"
 const REFRESH_INTERVAL_MS = 10000
 
 type FileItem = {
+  key: string
   name: string
-  isDirectory: boolean
   size: number
-  modified: string
+  lastModified: string
+  isFolder: boolean
 }
 
 function formatSize(bytes: number): string {
@@ -33,22 +34,32 @@ function formatDate(isoString: string): string {
   })
 }
 
+function getParentPrefix(prefix: string): string | null {
+  if (!prefix) return null
+  const parts = prefix.replace(/\/$/, "").split("/")
+  parts.pop()
+  return parts.length > 0 ? `${parts.join("/")}/` : ""
+}
+
 function MyFilesContent() {
   const searchParams = useSearchParams()
-  const currentPath = searchParams.get("path") ?? ""
+  const currentPrefix = searchParams.get("prefix") ?? ""
 
   const [files, setFiles] = useState<FileItem[]>([])
-  const [parentPath, setParentPath] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
+  const [downloading, setDownloading] = useState<string | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const parentPrefix = getParentPrefix(currentPrefix)
+  const showBackButton = parentPrefix !== null
 
   const fetchFiles = useCallback(async () => {
     try {
-      const url = currentPath
-        ? `/api/my-files?path=${encodeURIComponent(currentPath)}`
+      const url = currentPrefix
+        ? `/api/my-files?prefix=${encodeURIComponent(currentPrefix)}`
         : "/api/my-files"
       const res = await fetch(url, { credentials: "include" })
       const data = await res.json()
@@ -58,16 +69,14 @@ function MyFilesContent() {
       }
 
       setFiles(data.files ?? [])
-      setParentPath(data.parentPath ?? null)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch files")
       setFiles([])
-      setParentPath(null)
     } finally {
       setLoading(false)
     }
-  }, [currentPath])
+  }, [currentPrefix])
 
   useEffect(() => {
     setLoading(true)
@@ -83,25 +92,39 @@ function MyFilesContent() {
     }
   }, [fetchFiles])
 
-  const navigateToFolder = (folderName: string) => {
-    const newPath = currentPath
-      ? `${currentPath}/${folderName}`
-      : folderName
-    window.location.href = `/my-files?path=${encodeURIComponent(newPath)}`
-  }
-
-  const navigateToParent = () => {
-    if (parentPath === null) return
-    const url =
-      parentPath === ""
-        ? "/my-files"
-        : `/my-files?path=${encodeURIComponent(parentPath)}`
+  const navigateToFolder = (folderKey: string) => {
+    const url = `/my-files?prefix=${encodeURIComponent(folderKey)}`
     window.location.href = url
   }
 
-  const downloadFile = (filePath: string) => {
-    const url = `/api/download?path=${encodeURIComponent(filePath)}`
-    window.open(url, "_blank", "noopener,noreferrer")
+  const navigateToParent = () => {
+    if (parentPrefix === null) return
+    const url =
+      parentPrefix === ""
+        ? "/my-files"
+        : `/my-files?prefix=${encodeURIComponent(parentPrefix)}`
+    window.location.href = url
+  }
+
+  const downloadFile = async (key: string) => {
+    setDownloading(key)
+    try {
+      const res = await fetch(
+        `/api/download?key=${encodeURIComponent(key)}`,
+        { credentials: "include" }
+      )
+      const data = await res.json()
+
+      if (!data.success || !data.url) {
+        throw new Error(data.error ?? "Failed to get download URL")
+      }
+
+      window.location.href = data.url
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Download failed")
+    } finally {
+      setDownloading(null)
+    }
   }
 
   const filteredFiles = searchQuery.trim()
@@ -133,7 +156,7 @@ function MyFilesContent() {
         <main className="flex-1 overflow-y-auto p-4 sm:p-6">
           <div className="mb-6">
             <div className="flex flex-wrap items-center gap-2">
-              {parentPath !== null && (
+              {showBackButton && (
                 <button
                   onClick={navigateToParent}
                   className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
@@ -205,107 +228,104 @@ function MyFilesContent() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredFiles.map((file) => {
-                        const filePath = currentPath
-                          ? `${currentPath}/${file.name}`
-                          : file.name
-                        return (
-                          <tr
-                            key={file.name}
-                            className={cn(
-                              "border-b border-border last:border-0 transition-colors",
-                              file.isDirectory
-                                ? "cursor-pointer hover:bg-muted/30"
-                                : "hover:bg-muted/30"
-                            )}
-                            onClick={() =>
-                              file.isDirectory
-                                ? navigateToFolder(file.name)
-                                : downloadFile(filePath)
-                            }
-                          >
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-3">
-                                <div
-                                  className={cn(
-                                    "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl",
-                                    file.isDirectory
-                                      ? "bg-primary/10"
-                                      : "bg-secondary"
-                                  )}
-                                >
-                                  {file.isDirectory ? (
-                                    <Folder className="h-5 w-5 text-primary" />
-                                  ) : (
-                                    <FileText className="h-5 w-5 text-muted-foreground" />
-                                  )}
-                                </div>
-                                <span className="font-medium text-foreground truncate">
-                                  {file.name}
-                                </span>
+                      {filteredFiles.map((file) => (
+                        <tr
+                          key={file.key}
+                          className={cn(
+                            "border-b border-border last:border-0 transition-colors",
+                            file.isFolder
+                              ? "cursor-pointer hover:bg-muted/30"
+                              : "hover:bg-muted/30"
+                          )}
+                          onClick={() =>
+                            file.isFolder
+                              ? navigateToFolder(file.key)
+                              : downloadFile(file.key)
+                          }
+                        >
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-3">
+                              <div
+                                className={cn(
+                                  "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl",
+                                  file.isFolder
+                                    ? "bg-primary/10"
+                                    : "bg-secondary"
+                                )}
+                              >
+                                {file.isFolder ? (
+                                  <Folder className="h-5 w-5 text-primary" />
+                                ) : (
+                                  <FileText className="h-5 w-5 text-muted-foreground" />
+                                )}
                               </div>
-                            </td>
-                            <td className="hidden px-4 py-3 text-muted-foreground sm:table-cell">
-                              {file.isDirectory ? "—" : formatSize(file.size)}
-                            </td>
-                            <td className="hidden px-4 py-3 text-muted-foreground md:table-cell">
-                              {formatDate(file.modified)}
-                            </td>
-                          </tr>
-                        )
-                      })}
+                              <span className="font-medium text-foreground truncate">
+                                {file.name}
+                              </span>
+                              {!file.isFolder && downloading === file.key && (
+                                <span className="text-xs text-muted-foreground">
+                                  …
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="hidden px-4 py-3 text-muted-foreground sm:table-cell">
+                            {file.isFolder ? "—" : formatSize(file.size)}
+                          </td>
+                          <td className="hidden px-4 py-3 text-muted-foreground md:table-cell">
+                            {formatDate(file.lastModified)}
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
               </div>
 
               <div className="mt-4 grid gap-3 sm:hidden">
-                {filteredFiles.map((file) => {
-                  const filePath = currentPath
-                    ? `${currentPath}/${file.name}`
-                    : file.name
-                  return (
+                {filteredFiles.map((file) => (
+                  <div
+                    key={file.key}
+                    className={cn(
+                      "flex items-center gap-3 rounded-xl border border-border bg-card p-4",
+                      file.isFolder
+                        ? "cursor-pointer active:opacity-80"
+                        : ""
+                    )}
+                    onClick={() =>
+                      file.isFolder
+                        ? navigateToFolder(file.key)
+                        : downloadFile(file.key)
+                    }
+                  >
                     <div
-                      key={file.name}
                       className={cn(
-                        "flex items-center gap-3 rounded-xl border border-border bg-card p-4",
-                        file.isDirectory
-                          ? "cursor-pointer active:opacity-80"
-                          : ""
+                        "flex h-12 w-12 shrink-0 items-center justify-center rounded-xl",
+                        file.isFolder ? "bg-primary/10" : "bg-secondary"
                       )}
-                      onClick={() =>
-                        file.isDirectory
-                          ? navigateToFolder(file.name)
-                          : downloadFile(filePath)
-                      }
                     >
-                      <div
-                        className={cn(
-                          "flex h-12 w-12 shrink-0 items-center justify-center rounded-xl",
-                          file.isDirectory ? "bg-primary/10" : "bg-secondary"
-                        )}
-                      >
-                        {file.isDirectory ? (
-                          <Folder className="h-6 w-6 text-primary" />
-                        ) : (
-                          <FileText className="h-6 w-6 text-muted-foreground" />
-                        )}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium text-foreground">
-                          {file.name}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {file.isDirectory ? "Folder" : formatSize(file.size)} ·{" "}
-                          {formatDate(file.modified)}
-                        </p>
-                      </div>
-                      {!file.isDirectory && (
-                        <Download className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      {file.isFolder ? (
+                        <Folder className="h-6 w-6 text-primary" />
+                      ) : (
+                        <FileText className="h-6 w-6 text-muted-foreground" />
                       )}
                     </div>
-                  )
-                })}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium text-foreground">
+                        {file.name}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {file.isFolder
+                          ? "Folder"
+                          : formatSize(file.size)} ·{" "}
+                        {formatDate(file.lastModified)}
+                      </p>
+                    </div>
+                    {!file.isFolder && (
+                      <Download className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    )}
+                  </div>
+                ))}
               </div>
             </>
           )}
