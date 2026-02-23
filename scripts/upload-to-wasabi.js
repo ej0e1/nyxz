@@ -4,6 +4,7 @@
  * Usage: node scripts/upload-to-wasabi.js "%F"
  * (%F = qBittorrent completed path - file or folder)
  */
+require("dotenv").config({ path: require("path").resolve(__dirname, "../.env") });
 
 const fs = require("fs");
 const path = require("path");
