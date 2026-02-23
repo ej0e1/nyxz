@@ -1,3 +1,6 @@
+// DEV PATCH: Temporarily bypass authentication for development
+// Replace your current GET handler with this version
+
 import { NextRequest, NextResponse } from "next/server"
 import {
   ListObjectsV2Command,
@@ -5,7 +8,6 @@ import {
   type CommonPrefix,
 } from "@aws-sdk/client-s3"
 import { getWasabiClient, getWasabiBucket } from "@/lib/wasabi"
-import { requireAuthUserId } from "@/lib/auth"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -29,15 +31,12 @@ type ErrorBody = {
   error: string
 }
 
-/**
- * GET /api/my-files?prefix=
- * Lists objects scoped to users/{userId}/. Requires auth.
- */
 export async function GET(
   request: NextRequest
 ): Promise<NextResponse<SuccessBody | ErrorBody>> {
   try {
-    const userId = await requireAuthUserId()
+    // 🔥 DEV MODE: hardcode userId
+    const userId = 1
 
     const prefixParam = request.nextUrl.searchParams.get("prefix") ?? ""
     const relPrefix = prefixParam.trim().replace(/^users\/[^/]+\/files\/?/, "")
@@ -121,10 +120,6 @@ export async function GET(
         { success: false, error: "Storage not configured" },
         { status: 503 }
       )
-    }
-
-    if (message === "Unauthorized") {
-      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 })
     }
 
     return NextResponse.json(
