@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { GetObjectCommand } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
 import { getWasabiClient, getWasabiBucket } from "@/lib/wasabi"
+import { requireAuthUserId } from "@/lib/auth"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -22,10 +23,12 @@ function sanitizeKey(key: string | null): string | null {
 /**
  * GET /api/download?key=
  * Returns signed URL for direct download from Wasabi.
- * URL expires in 300 seconds.
+ * Key must be under users/{userId}/. Requires auth.
  */
 export async function GET(request: NextRequest) {
   try {
+    const userId = await requireAuthUserId()
+
     const keyParam = request.nextUrl.searchParams.get("key")
     const key = sanitizeKey(keyParam)
 
@@ -33,6 +36,14 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(
         { success: false, error: "Key is required" },
         { status: 400 }
+      )
+    }
+
+    const allowedPrefix = `users/${userId}/files/`
+    if (!key.startsWith(allowedPrefix)) {
+      return NextResponse.json(
+        { success: false, error: "Forbidden" },
+        { status: 403 }
       )
     }
 
@@ -71,6 +82,10 @@ export async function GET(request: NextRequest) {
         { success: false, error: "Storage not configured" },
         { status: 503 }
       )
+    }
+
+    if (message === "Unauthorized") {
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 })
     }
 
     return NextResponse.json(

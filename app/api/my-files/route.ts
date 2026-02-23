@@ -5,6 +5,7 @@ import {
   type CommonPrefix,
 } from "@aws-sdk/client-s3"
 import { getWasabiClient, getWasabiBucket } from "@/lib/wasabi"
+import { requireAuthUserId } from "@/lib/auth"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -30,16 +31,20 @@ type ErrorBody = {
 
 /**
  * GET /api/my-files?prefix=
- * Lists objects and common prefixes (folders) from Wasabi bucket.
- * prefix is optional, defaults to root.
+ * Lists objects scoped to users/{userId}/. Requires auth.
  */
 export async function GET(
   request: NextRequest
 ): Promise<NextResponse<SuccessBody | ErrorBody>> {
   try {
+    const userId = await requireAuthUserId()
+
     const prefixParam = request.nextUrl.searchParams.get("prefix") ?? ""
-    const prefix = prefixParam.trim()
-    const normalizedPrefix = prefix && !prefix.endsWith("/") ? `${prefix}/` : prefix
+    const relPrefix = prefixParam.trim().replace(/^users\/[^/]+\/files\/?/, "")
+    const userRoot = `users/${userId}/files/`
+    const normalizedPrefix = relPrefix
+      ? userRoot + (relPrefix.endsWith("/") ? relPrefix : `${relPrefix}/`)
+      : userRoot
 
     const client = getWasabiClient()
     const bucket = getWasabiBucket()
@@ -116,6 +121,10 @@ export async function GET(
         { success: false, error: "Storage not configured" },
         { status: 503 }
       )
+    }
+
+    if (message === "Unauthorized") {
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 })
     }
 
     return NextResponse.json(

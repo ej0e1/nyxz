@@ -1,6 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useState, Suspense } from "react"
+import { signIn } from "next-auth/react"
+import { useSearchParams } from "next/navigation"
 import { Cloud, Eye, EyeOff, ArrowRight } from "lucide-react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -9,19 +11,37 @@ import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Separator } from "@/components/ui/separator"
 
-export default function LoginPage() {
+function LoginContent() {
+  const searchParams = useSearchParams()
+  const callbackUrl = searchParams.get("callbackUrl") ?? "/"
   const [showPassword, setShowPassword] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [remember, setRemember] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState("")
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    setError("")
     setIsLoading(true)
-    setTimeout(() => {
-      window.location.href = "/"
-    }, 800)
+    try {
+      const res = await signIn("credentials", {
+        email,
+        password,
+        callbackUrl,
+        redirect: false,
+      })
+      if (res?.error) {
+        setError("Invalid credentials")
+        setIsLoading(false)
+        return
+      }
+      window.location.href = callbackUrl
+    } catch {
+      setError("Sign in failed")
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -141,6 +161,12 @@ export default function LoginPage() {
             <Separator className="flex-1" />
           </div>
 
+          {error && (
+            <div className="rounded-xl border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              {error}
+            </div>
+          )}
+
           {/* Form */}
           <form onSubmit={handleSubmit} className="flex flex-col gap-5">
             <div className="flex flex-col gap-2">
@@ -258,5 +284,19 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+        </div>
+      }
+    >
+      <LoginContent />
+    </Suspense>
   )
 }
