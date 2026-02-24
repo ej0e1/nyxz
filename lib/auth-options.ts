@@ -1,10 +1,12 @@
 import type { NextAuthOptions } from "next-auth"
 import { prisma } from "@/lib/prisma"
+import bcrypt from "bcryptjs"
 import CredentialsProvider from "next-auth/providers/credentials"
 
 export const authOptions: NextAuthOptions = {
   session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
   pages: { signIn: "/login" },
+  secret: process.env.NEXTAUTH_SECRET,
   providers: [
     CredentialsProvider({
       name: "credentials",
@@ -13,12 +15,14 @@ export const authOptions: NextAuthOptions = {
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        if (!credentials?.email) return null
+        if (!credentials?.email || !credentials?.password) return null
         const user = await prisma.user.findUnique({
           where: { email: credentials.email },
         })
-        // TODO: add bcrypt password verification
-        return user ? { id: user.id, email: user.email, name: user.name } : null
+        if (!user) return null
+        const valid = await bcrypt.compare(credentials.password, user.passwordHash)
+        if (!valid) return null
+        return { id: String(user.id), email: user.email }
       },
     }),
   ],

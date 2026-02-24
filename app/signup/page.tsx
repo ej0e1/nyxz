@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { signIn } from "next-auth/react"
 import { Cloud, Eye, EyeOff, ArrowRight, Check } from "lucide-react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -18,18 +19,45 @@ const PLAN_FEATURES = [
 
 export default function SignupPage() {
   const [showPassword, setShowPassword] = useState(false)
-  const [name, setName] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [agreed, setAgreed] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState("")
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    setError("")
     setIsLoading(true)
-    setTimeout(() => {
-      window.location.href = "/"
-    }, 800)
+    try {
+      const res = await fetch("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.error ?? "Registration failed")
+        setIsLoading(false)
+        return
+      }
+      const signInRes = await signIn("credentials", {
+        email,
+        password,
+        callbackUrl: "/my-files",
+        redirect: false,
+      })
+      if (signInRes?.error) {
+        setError("Account created. Please sign in.")
+        setIsLoading(false)
+        window.location.href = "/login?registered=1"
+        return
+      }
+      window.location.href = "/my-files"
+    } catch {
+      setError("Registration failed")
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -146,22 +174,14 @@ export default function SignupPage() {
             <Separator className="flex-1" />
           </div>
 
+          {error && (
+            <div className="rounded-xl border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              {error}
+            </div>
+          )}
+
           {/* Form */}
           <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="name">Full name</Label>
-              <Input
-                id="name"
-                type="text"
-                placeholder="John Doe"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="h-11 rounded-xl"
-                required
-                autoComplete="name"
-              />
-            </div>
-
             <div className="flex flex-col gap-2">
               <Label htmlFor="email">Email</Label>
               <Input

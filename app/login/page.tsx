@@ -13,7 +13,7 @@ import { Separator } from "@/components/ui/separator"
 
 function LoginContent() {
   const searchParams = useSearchParams()
-  const callbackUrl = searchParams.get("callbackUrl") ?? "/"
+  const callbackUrl = searchParams.get("callbackUrl") ?? "/my-files"
   const [showPassword, setShowPassword] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
