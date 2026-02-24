@@ -44,7 +44,7 @@ export default function SignupPage() {
       const signInRes = await signIn("credentials", {
         email,
         password,
-        callbackUrl: "/my-files",
+        callbackUrl: "/",
         redirect: false,
       })
       if (signInRes?.error) {
@@ -53,7 +53,7 @@ export default function SignupPage() {
         window.location.href = "/login?registered=1"
         return
       }
-      window.location.href = "/my-files"
+      window.location.href = "/"
     } catch {
       setError("Registration failed")
       setIsLoading(false)
