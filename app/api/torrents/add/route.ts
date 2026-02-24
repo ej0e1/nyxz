@@ -87,17 +87,17 @@ export async function POST(request: NextRequest) {
 
     const job = await prisma.torrentJob.create({
       data: {
-        userId,
-        magnetLink: magnetLinkForJob || "(.torrent file)",
-        status: "DOWNLOADING",
-        progress: 0,
+        userId: parseInt(userId, 10),
+        magnet: magnetLinkForJob || "(.torrent file)",
+        status: "queued",
+        ratio: 0,
       },
     })
 
     const jobsBase = getJobsBasePath()
     const savepath = `${jobsBase}/${job.id}`
     qbitForm.append("savepath", savepath)
-    qbitForm.append("category", job.id)
+    qbitForm.append("category", String(job.id))
 
     const text = await qbitPostForm("/api/v2/torrents/add", qbitForm)
 
