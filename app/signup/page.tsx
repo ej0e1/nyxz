@@ -36,24 +36,17 @@ export default function SignupPage() {
         body: JSON.stringify({ email, password }),
       })
       const data = await res.json()
-      if (!res.ok) {
+      if (!res.ok || !data.success) {
         setError(data.error ?? "Registration failed")
         setIsLoading(false)
         return
       }
-      const signInRes = await signIn("credentials", {
+      await signIn("credentials", {
         email,
         password,
+        redirect: true,
         callbackUrl: "/",
-        redirect: false,
       })
-      if (signInRes?.error) {
-        setError("Account created. Please sign in.")
-        setIsLoading(false)
-        window.location.href = "/login?registered=1"
-        return
-      }
-      window.location.href = "/"
     } catch {
       setError("Registration failed")
       setIsLoading(false)
