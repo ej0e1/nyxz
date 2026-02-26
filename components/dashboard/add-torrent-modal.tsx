@@ -87,7 +87,7 @@ export function AddTorrentModal({
           binary += String.fromCharCode.apply(null, chunk as unknown as number[])
         }
         const base64 = btoa(binary)
-        res = await fetch("/api/torrents/add", {
+        res = await fetch("/api/torrent", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -97,7 +97,7 @@ export function AddTorrentModal({
           credentials: "include",
         })
       } else {
-        res = await fetch("/api/torrents/add", {
+        res = await fetch("/api/torrent", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ magnetLink: magnet }),
